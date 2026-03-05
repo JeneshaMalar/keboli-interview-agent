@@ -1,0 +1,26 @@
+[project]
+name = "interview-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.131.0",
+    "uvicorn[standard]>=0.41.0",
+    "langchain>=1.2.10",
+    "langchain-groq>=1.1.2",
+    "langgraph>=1.0.9",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "httpx>=0.28.0",
+    "livekit-agents[turn-detector]>=1.4.0",
+    "livekit-plugins-deepgram>=1.4.0",
+    "livekit-plugins-silero>=1.4.0",
+    "livekit-plugins-turn-detector>=1.4.0",
+    "livekit-plugins-bey>=0.2.0",
+    "onnxruntime<1.20.0",
+    "livekit>=1.1.2",
+    "dotenv>=0.9.9",
+]
+
+
