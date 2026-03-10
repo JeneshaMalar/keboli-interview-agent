@@ -39,6 +39,15 @@ async def generate_skill_graph(request: SkillGraphRequest):
         
         logger.info(f"Generating skill graph for assessment {request.assessment_id} "
                      f"(difficulty={difficulty_level}). LLM will analyze JD to determine experience level.")
+                     
+        await keboli_client.post_log({
+            "level": "INFO",
+            "service": "interview_agent",
+            "component": "skill_graph",
+            "event_type": "graph_generation_started",
+            "assessment_id": request.assessment_id,
+            "message": f"Started skill graph generation for assessment {request.assessment_id} (difficulty={difficulty_level})"
+        })
         
         prompt = ChatPromptTemplate.from_template(SKILL_EXTRACTION_PROMPT)
         structured_llm = llm.with_structured_output(SkillGraph)
@@ -54,6 +63,19 @@ async def generate_skill_graph(request: SkillGraphRequest):
         logger.info(f"Skill graph generated — experience_level={skill_graph.get('experience_level')}, "
                      f"reason={skill_graph.get('experience_reasoning')}, "
                      f"{len(skill_graph.get('skills', []))} skills extracted")
+                     
+        await keboli_client.post_log({
+            "level": "INFO",
+            "service": "interview_agent",
+            "component": "skill_graph",
+            "event_type": "graph_generation_completed",
+            "assessment_id": request.assessment_id,
+            "message": "Skill graph generated successfully",
+            "details": {
+                "experience_level": skill_graph.get('experience_level'),
+                "skills_extracted": len(skill_graph.get('skills', []))
+            }
+        })
         
         await keboli_client.update_assessment_skills(request.assessment_id, skill_graph)
         
@@ -62,6 +84,15 @@ async def generate_skill_graph(request: SkillGraphRequest):
     except HTTPException:
         raise
     except Exception as e:
+        await keboli_client.post_log({
+            "level": "ERROR",
+            "service": "interview_agent",
+            "component": "skill_graph",
+            "event_type": "graph_generation_failed",
+            "assessment_id": request.assessment_id,
+            "message": f"Error generating skill graph: {str(e)}",
+            "error_stack": str(e)
+        })
         logger.error(f"Error generating skill graph: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate skill graph: {str(e)}")
 
@@ -108,7 +139,7 @@ async def chat(request: InterviewTurnRequest):
             elif isinstance(m, AIMessage):
                 serializable_messages.append({"role": "ai", "content": m.content})
 
-        return {
+        response_payload = {
             "response": last_ai_message,
             "is_completed": final_state.get("is_completed", False),
             "state": {
@@ -116,7 +147,30 @@ async def chat(request: InterviewTurnRequest):
                 "messages": serializable_messages
             }
         }
+        
+        await keboli_client.post_log({
+            "level": "INFO",
+            "service": "interview_agent",
+            "component": "chat",
+            "event_type": "chat_turn_completed",
+            "session_id": request.session_id,
+            "assessment_id": request.assessment_id,
+            "message": "Processed interview chat turn",
+            "details": {"is_completed": final_state.get("is_completed", False)}
+        })
+        
+        return response_payload
     except Exception as e:
+        await keboli_client.post_log({
+            "level": "ERROR",
+            "service": "interview_agent",
+            "component": "chat",
+            "event_type": "chat_turn_failed",
+            "session_id": request.session_id,
+            "assessment_id": request.assessment_id,
+            "message": f"Error processing chat turn: {str(e)}",
+            "error_stack": str(e)
+        })
         print(f"Agent Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
