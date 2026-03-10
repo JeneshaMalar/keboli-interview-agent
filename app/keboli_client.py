@@ -14,7 +14,6 @@ class KeboliClient:
     async def update_assessment_skills(self, assessment_id: str, skill_graph: dict):
         payload = {"skill_graph": skill_graph}
         async with httpx.AsyncClient() as client:
-            # Note: This endpoint is internal and shouldn't require complex auth
             response = await client.patch(
                 f"{self.base_url}/api/assessment/{assessment_id}/skills", 
                 json=payload
