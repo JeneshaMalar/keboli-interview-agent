@@ -14,15 +14,18 @@ class InterviewState(TypedDict):
     
     skill_graph: Optional[dict]
     
+    difficulty_level: Optional[str]  
+    experience_level: Optional[str]  # LLM-determined from JD: "fresher", "junior", "mid-level", "senior", "lead"
+    experience_reasoning: Optional[str]  # LLM's reasoning for the experience level determination
+    
     messages: Annotated[List[dict], operator.add]
     current_skill_index: int
     current_skill_depth: int 
     total_duration_minutes: int
     elapsed_time_seconds: int
     
-    # Conversation phase tracking
-    # "greeting" -> "warmup" -> "interview" -> "closing"
-    conversation_phase: str
+    
+    conversation_phase: str # "greeting" -> "warmup" -> "interview" -> "closing"
     previous_skill_name: Optional[str]
     
     scores: List[SkillScore]
