@@ -2,7 +2,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from app.graph import interview_agent
+from app.llm import llm
+from app.prompt_manager import SKILL_EXTRACTION_PROMPT, SkillGraph
+from app.keboli_client import keboli_client
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
+import logging
+
+logger = logging.getLogger("keboli-fastapi")
 
 app = FastAPI(title="Keboli Interview Agent")
 
@@ -11,6 +18,53 @@ class InterviewTurnRequest(BaseModel):
     assessment_id: str
     last_message: Optional[str] = None
     state: Optional[dict] = None
+
+class SkillGraphRequest(BaseModel):
+    assessment_id: str
+
+@app.post("/generate-skill-graph")
+async def generate_skill_graph(request: SkillGraphRequest):
+    try:
+        assessment = await keboli_client.get_assessment(request.assessment_id)
+        
+        existing_graph = assessment.get("skill_graph")
+        if existing_graph:
+            return {"status": "exists", "skill_graph": existing_graph}
+        
+        job_description = assessment.get("job_description")
+        if not job_description:
+            raise HTTPException(status_code=400, detail="Assessment has no job description")
+        
+        difficulty_level = assessment.get("difficulty_level", "medium")
+        
+        logger.info(f"Generating skill graph for assessment {request.assessment_id} "
+                     f"(difficulty={difficulty_level}). LLM will analyze JD to determine experience level.")
+        
+        prompt = ChatPromptTemplate.from_template(SKILL_EXTRACTION_PROMPT)
+        structured_llm = llm.with_structured_output(SkillGraph)
+        chain = prompt | structured_llm
+        
+        result = await chain.ainvoke({
+            "job_description": job_description,
+            "difficulty_level": difficulty_level,
+        })
+        
+        skill_graph = result.model_dump()
+        
+        logger.info(f"Skill graph generated — experience_level={skill_graph.get('experience_level')}, "
+                     f"reason={skill_graph.get('experience_reasoning')}, "
+                     f"{len(skill_graph.get('skills', []))} skills extracted")
+        
+        await keboli_client.update_assessment_skills(request.assessment_id, skill_graph)
+        
+        return {"status": "generated", "skill_graph": skill_graph}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating skill graph: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate skill graph: {str(e)}")
+
 
 @app.post("/chat")
 async def chat(request: InterviewTurnRequest):
@@ -69,3 +123,4 @@ async def chat(request: InterviewTurnRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
+

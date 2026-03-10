@@ -15,6 +15,9 @@ async def greeting_node(state: InterviewState):
     prompt = GREETING_PROMPT.format(
         title=state.get("title", "this position"),
         duration=state.get("total_duration_minutes", 5),
+        difficulty_level=state.get("difficulty_level", "medium"),
+        experience_level=state.get("experience_level", "mid-level"),
+        experience_reasoning=state.get("experience_reasoning", ""),
     )
     
     response = await llm.ainvoke(prompt)
@@ -28,12 +31,13 @@ async def greeting_node(state: InterviewState):
 
 
 async def interview_node(state: InterviewState):
-    """Main interview logic with natural, human-like conversation phases."""
     messages = state.get("messages", [])
     skills = state.get("skill_graph", {}).get("skills", [])
     current_idx = state.get("current_skill_index", 0)
     current_depth = state.get("current_skill_depth", 0)
     phase = state.get("conversation_phase", "interview")
+    difficulty_level = state.get("difficulty_level", "medium")
+    experience_level = state.get("experience_level", "mid-level")
     
     last_human_message = ""
     for m in reversed(messages):
@@ -79,6 +83,8 @@ async def interview_node(state: InterviewState):
             title=state.get("title", "this position"),
             candidate_response=last_human_message,
             first_skill=first_skill,
+            difficulty_level=difficulty_level,
+            experience_level=experience_level,
         )
         response = await llm.ainvoke(prompt)
         return {
@@ -152,6 +158,8 @@ async def interview_node(state: InterviewState):
             total_minutes=total_minutes,
             skills_covered=current_idx,
             total_skills=len(skills),
+            difficulty_level=difficulty_level,
+            experience_level=experience_level,
         )
 
     response = await llm.ainvoke(prompt)
