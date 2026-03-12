@@ -1,147 +1,310 @@
-# Interview Agent
+# Keboli – Interview Agent
 
-This service powers the Interview Agent, responsible for handling interview-related API requests.
-It is built using FastAPI and managed with uv for fast dependency management and execution.
+The **Interview Agent** is the AI-driven service responsible for conducting interview sessions, interacting with candidates, generating interview questions, and building a **skill graph** using Large Language Models (LLMs).
 
-The service runs on port 8001.
-
----
-
-## 🚀 Tech Stack
-
-* FastAPI
-* Uvicorn
-* Python
-* Pydantic
+This service works alongside the backend API and real-time communication infrastructure to simulate a structured technical interview.
 
 
 ---
 
-## 📦 Prerequisites
+# 1. Project Information
 
-Make sure you have the following installed:
+## Overview
 
-* Python **3.9+**
-* pip
+The Interview Agent acts as the **AI interviewer** in the AI Interview Bot platform.
+
+It connects to a real-time communication session and interacts with the candidate by asking questions and collecting responses.
+
+The agent integrates with **LLM services** to dynamically generate questions and build a **skill graph** that guides the interview flow.
+
+Based on the candidate's responses, the agent determines the next question to ask.
+
+The collected responses are later processed by the **Evaluation Agent**, which performs detailed candidate assessment.
+
+---
+
+## Responsibilities
+
+The Interview Agent is responsible for:
+
+* conducting AI-driven interviews
+* generating interview questions
+* generating a **skill graph** for interview flow
+* dynamically selecting the next question
+* collecting candidate responses
+* interacting with the real-time communication system
+* sending collected responses to the backend
+
+---
+
+## Key Features
+
+* AI-based interview orchestration
+* dynamic question generation using LLMs
+* skill graph generation for structured interviews
+* real-time interaction with candidates
+* adaptive questioning based on candidate responses
+* integration with LiveKit for session communication
+* asynchronous task handling
+
+---
+
+## Technology Stack
+
+| Component            | Technology |
+| -------------------- | ---------- |
+| Language             | Python     |
+| AI Orchestration     | LangGraph  |
+| LLM Provider         | Groq       |
+| Realtime Integration | LiveKit    |
+| HTTP Client          | httpx      |
+| Async Framework      | asyncio    |
+
+---
+
+# 2. Architecture Overview
+
+The Interview Agent operates as a **separate microservice** that communicates with the backend and AI model providers.
 
 
-Check your installation:
+## System Architecture
 
-```bash
-python --version
-pip --version
+```
+                   +------------------------+
+                   |       FastAPI Backend  |
+                   |  (Session Management)  |
+                   +-----------+------------+
+                               |
+                               | Start Interview
+                               |
+                               v
+                    +-----------------------+
+                    |    Interview Agent    |
+                    |                       |
+                    |  - Interview Logic    |
+                    |  - Question Generation|
+                    |  - Skill Graph Build  |
+                    +-----------+-----------+
+                                |
+                ----------------------------------
+                |                                |
+                v                                v
+
+        +----------------+              +------------------+
+        |   LiveKit      |              |   LLM Provider   |
+        | Real-time Room |              |      (Groq)      |
+        +----------------+              +------------------+
+
 ```
 
 ---
 
-## ⚙️ Setup
+## Component Responsibilities
 
-### 1. Clone the repository
+### Interview Agent Core
 
-```bash
+Handles:
+
+* interview workflow orchestration
+* dynamic question sequencing
+* skill graph generation
+* response collection
+
+---
+
+### LiveKit Integration
+
+The agent connects to **LiveKit rooms** to interact with candidates.
+
+Used for:
+
+* audio/video communication
+* real-time session events
+
+---
+
+### LLM Adapter
+
+The LLM adapter module:
+
+* generates interview questions
+* builds the skill graph
+* determines the next question based on responses
+* manages adaptive interview flow
+
+---
+
+### Backend Communication
+
+The agent communicates with the backend to:
+
+* receive interview session information
+* send collected candidate responses
+* update interview session status
+
+---
+
+# 3. Service Interaction Flow
+
+```
+Recruiter Creates Assessment
+            |
+            v
+Backend API
+            |
+            | Candidate joins interview
+            v
+LiveKit Session Created
+            |
+            v
+Interview Agent Connects
+            |
+            | Generate Skill Graph
+            |
+            v
+Agent Generates Questions
+            |
+            v
+Candidate Responds
+            |
+            v
+Agent Collects Responses
+            |
+            v
+Responses Stored in Backend
+            |
+            v
+Evaluation Agent Processes Responses
+            |
+            v
+Evaluation Results Generated
+```
+
+---
+
+
+# 4. Interview Workflow
+
+The Interview Agent follows a structured workflow:
+
+### 1. Session Initialization
+
+* backend triggers interview session
+* agent connects to the LiveKit room
+
+---
+
+### 2. Skill Graph Generation
+
+The agent generates a **skill graph** based on:
+
+* assessment configuration
+* required technical skills
+* interview structure
+
+This graph determines how the interview will progress.
+
+---
+
+### 3. Question Generation
+
+The agent generates interview questions using LLMs based on:
+
+* skill graph structure
+* candidate responses
+* interview difficulty progression
+
+---
+
+### 4. Candidate Interaction
+
+The candidate answers questions during the session.
+
+Responses are collected and stored.
+
+---
+
+### 5. Response Collection
+
+The agent collects and sends candidate responses to the backend service.
+
+---
+
+
+
+# 5. Running the Interview Agent Locally
+
+## Prerequisites
+
+Install:
+
+* Python 3.10+
+* Docker (optional)
+* LiveKit server or LiveKit Cloud account
+
+---
+
+# Option 1 – Run with Docker
+
+Clone repository:
+
+```
 git clone https://github.com/JeneshaMalar/keboli-interview-agent.git
+cd keboli-interview-agent
+```
 
+Build and run container:
+
+```
+docker build -t interview-agent .
+docker run interview-agent
 ```
 
 ---
 
-### 2. Create a virtual environment
+# Option 2 – Run without Docker
 
-```bash
+Create virtual environment:
+
+```
 python -m venv venv
 ```
 
-Activate the environment:
+Activate environment:
 
-**Mac/Linux**
+Linux / Mac
 
-```bash
+```
 source venv/bin/activate
 ```
 
-**Windows**
+Install dependencies:
 
-```bash
-venv\Scripts\activate
 ```
-
-### 3. Install dependencies using `uv`
-
-This project uses **uv** for fast Python package management and environment handling.
-
-Install `uv` if you don't have it:
-
-```bash
-pip install uv
-```
-
-or (recommended)
-
-```bash
-curl -Ls https://astral.sh/uv/install.sh | sh
-```
-
----
-
-### 4. Install project dependencies
-
-Install dependencies defined in `pyproject.toml`:
-
-```bash
 uv sync
 ```
 
-This will:
-
-* Create a virtual environment automatically
-* Install all dependencies from `pyproject.toml`
-* Lock them in `uv.lock`
-
 ---
 
+### Start Interview Agent
 
-
-## ▶️ Run the Development Server
-
-
-
-```bash
-uv run python3 -m app.agent_worker dev
-```
-
-The API will start at:
+Entry point:
 
 ```
-http://127.0.0.1:8001
+fastapi_server.py
+```
+
+Run service:
+
+```
+bash start.sh
 ```
 
 ---
 
-## 📖 API Documentation
+# 6. Environment Variables
 
-FastAPI automatically generates interactive API documentation.
-
-Swagger UI:
-
-```
-http://127.0.0.1:8001/docs
-```
-
-ReDoc:
-
-```
-http://127.0.0.1:8001/redoc
-```
-
----
-
-
-
-## 🔧 Environment Variables
-
-Create a `.env` file in the root directory if your project uses environment variables.
-
-Example:
+Example `.env` file:
 
 ```
 MAIN_BACKEND_URL=http://localhost:8000/api
@@ -155,4 +318,22 @@ BEY_API_KEY=<YOUR API KEY>
 ```
 
 ---
+
+# 7. Error Handling and Logging
+
+The Interview Agent includes logging mechanisms for:
+
+* interview session lifecycle
+* LLM communication errors
+* API failures
+
+System logs help monitor interview execution and diagnose issues.
+
+---
+
+# Author
+
+**Jenesha Malar**
+
+Keboli – Interview Agent Development
 
