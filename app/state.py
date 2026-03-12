@@ -33,3 +33,6 @@ class InterviewState(TypedDict):
     
     is_completed: bool
     should_nudge: bool
+    nudge_count: int  
+    closing_phase: Optional[str]  # "ask_questions" -> "final_close" for two-phase closing
+    closing_reason: Optional[str]  # Why the interview ended: "interview_completed", "time_limit", "candidate_exit"

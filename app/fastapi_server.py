@@ -119,6 +119,9 @@ async def chat(request: InterviewTurnRequest):
             "is_completed": False,
             "conversation_phase": "greeting",
             "previous_skill_name": None,
+            "nudge_count": 0,
+            "closing_phase": None,
+            "closing_reason": None,
         }
 
     if request.last_message:
