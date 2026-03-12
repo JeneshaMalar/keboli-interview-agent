@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import AsyncIterable
@@ -11,6 +12,7 @@ from livekit.agents.types import (
     APIConnectOptions,
     NotGivenOr,
 )
+from livekit import rtc
 
 from app.graph import interview_agent
 from app.state import InterviewState
@@ -18,6 +20,26 @@ from app.keboli_client import keboli_client
 from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger("keboli-llm-adapter")
+
+# ── Safety-net closing keyword detection (Approach B) ──
+CLOSING_KEYWORDS = [
+    "thank you for your time",
+    "that wraps up",
+    "we've covered everything",
+    "best of luck",
+    "wish you well",
+    "covered all the areas",
+    "thanks for taking the time",
+    "good luck with your application",
+    "it was great talking to you",
+    "we've covered all",
+]
+
+
+def _is_closing_message(text: str) -> bool:
+    """Detect if the LLM response is a closing message (safety net)."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in CLOSING_KEYWORDS)
 
 
 class InterviewLLM(llm.LLM):
@@ -28,6 +50,11 @@ class InterviewLLM(llm.LLM):
         self._state: dict | None = None
         self._initialized = False
         self._start_time: float | None = None
+        self._room: rtc.Room | None = None
+
+    def set_room(self, room: rtc.Room):
+        """Set the LiveKit room reference for sending data messages."""
+        self._room = room
 
     async def initialize(self):
         if self._initialized:
@@ -43,11 +70,37 @@ class InterviewLLM(llm.LLM):
             "current_skill_depth": 0,
             "elapsed_time_seconds": 0,
             "is_completed": False,
+            "nudge_count": 0,
+            "closing_phase": None,
+            "closing_reason": None,
         }
 
         self._state = initial_state
         self._initialized = True
         self._start_time = time.time()
+
+    async def _emit_interview_ended(self, reason: str):
+        """Emit interview_ended signal to the frontend via LiveKit data message."""
+        if not self._room:
+            logger.warning("No room reference — cannot emit interview_ended signal")
+            return
+
+        try:
+            payload = json.dumps({
+                "type": "interview_ended",
+                "reason": reason,
+                "auto_submit": True,
+                "session_id": self._session_id,
+            }).encode("utf-8")
+
+            await self._room.local_participant.publish_data(
+                payload,
+                reliable=True,
+                topic="interview_control",
+            )
+            logger.info(f"Emitted interview_ended signal (reason={reason}) to room")
+        except Exception as e:
+            logger.error(f"Failed to emit interview_ended: {e}")
 
     def chat(
         self,
@@ -181,8 +234,23 @@ class InterviewLLMStream(llm.LLMStream):
 
             logger.info(f"Agent response: {ai_response[:80]}...")
 
-            if result.get("is_completed"):
-                logger.info(f"Interview {self._state['session_id']} marked as COMPLETED. Triggering evaluation...")
+            # ── Determine if interview should end ──
+            is_completed = result.get("is_completed", False)
+            closing_reason = result.get("closing_reason", "completed")
+
+            # Approach B: Safety-net — detect closing keywords in LLM response
+            # even if is_completed wasn't explicitly set by the graph
+            if not is_completed and _is_closing_message(ai_response):
+                logger.warning(f"Safety-net: closing keywords detected in response but is_completed=False. Forcing completion.")
+                is_completed = True
+                closing_reason = "auto_detected_closing"
+
+            if is_completed:
+                logger.info(f"Interview {self._state['session_id']} marked as COMPLETED (reason={closing_reason}). Triggering evaluation...")
+
+                # Approach A: Emit interview_ended signal to frontend via LiveKit
+                await self._interview_llm._emit_interview_ended(closing_reason)
+
                 try:
                     await keboli_client.complete_session(self._state["session_id"])
                 except Exception as e:
