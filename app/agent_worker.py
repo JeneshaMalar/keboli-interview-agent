@@ -46,7 +46,8 @@ async def entrypoint(ctx: JobContext):
         await interview_llm.initialize()
     except Exception as e:
         logger.error(f"Failed to initialize InterviewLLM: {e}")
-       
+    
+    interview_llm.set_room(ctx.room)
 
     avatar = bey.AvatarSession()
 

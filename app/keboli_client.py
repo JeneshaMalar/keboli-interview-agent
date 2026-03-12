@@ -44,7 +44,7 @@ class KeboliClient:
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
-                    f"{self.base_url}/logs/",
+                    f"{self.base_url}/api/logs/",
                     json=log_data
                 )
                 response.raise_for_status()
