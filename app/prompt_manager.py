@@ -1,5 +1,29 @@
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
+import os
+import logging
+from langfuse import Langfuse
+
+logger = logging.getLogger("keboli-prompt-manager")
+
+langfuse = None
+if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
+    langfuse = Langfuse()
+
+def get_prompt(prompt_name: str, fallback_content: str) -> str:
+    """
+    Fetch prompt from Langfuse with a local fallback.
+    """
+    if not langfuse:
+        return fallback_content
+    
+    try:
+        prompt_obj = langfuse.get_prompt(prompt_name)
+        return prompt_obj.prompt
+    except Exception as e:
+        logger.warning(f"Could not fetch prompt '{prompt_name}' from Langfuse: {e}. Using fallback.")
+        return fallback_content
+
 
 class Skill(BaseModel):
     name: str = Field(..., description="Name of the skill")

@@ -6,13 +6,15 @@ from app.prompt_manager import (
     ADAPTIVE_INTERVIEW_PROMPT, 
     NUDGE_PROMPT,
     SKILL_TRANSITION_PROMPT,
-    CLOSING_PROMPT
+    CLOSING_PROMPT,
+    get_prompt
 )
 from langchain_core.messages import AIMessage, HumanMessage
 
 
 async def greeting_node(state: InterviewState):
-    prompt = GREETING_PROMPT.format(
+    prompt_template = get_prompt("GREETING_PROMPT", GREETING_PROMPT)
+    prompt = prompt_template.format(
         title=state.get("title", "this position"),
         duration=state.get("total_duration_minutes", 5),
         difficulty_level=state.get("difficulty_level", "medium"),
@@ -67,7 +69,8 @@ async def interview_node(state: InterviewState):
 
 
     if phase == "closing_ask_questions":
-        prompt = CLOSING_PROMPT.format(
+        prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
+        prompt = prompt_template.format(
             title=state.get("title", "this position"),
             closing_phase="final_close",
             candidate_questions_response=last_human_message,
@@ -84,7 +87,8 @@ async def interview_node(state: InterviewState):
         ext in last_human_message.lower() 
         for ext in ["goodbye", "end interview", "i'm done", "exit", "bye"]
     ):
-        prompt = CLOSING_PROMPT.format(
+        prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
+        prompt = prompt_template.format(
             title=state.get("title", "this position"),
             closing_phase="final_close",
             candidate_questions_response="",
@@ -101,12 +105,12 @@ async def interview_node(state: InterviewState):
 
     def _start_closing():
         """Start the closing sequence with 'ask_questions' phase."""
-        prompt = CLOSING_PROMPT.format(
+        prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
+        return prompt_template.format(
             title=state.get("title", "this position"),
             closing_phase="ask_questions",
             candidate_questions_response="",
         )
-        return prompt
 
     if elapsed_minutes >= total_minutes:
         prompt = _start_closing()
@@ -128,7 +132,8 @@ async def interview_node(state: InterviewState):
 
     if phase == "warmup":
         first_skill = skills[0]["name"] if skills else "your background"
-        prompt = WARMUP_TRANSITION_PROMPT.format(
+        prompt_template = get_prompt("WARMUP_TRANSITION_PROMPT", WARMUP_TRANSITION_PROMPT)
+        prompt = prompt_template.format(
             title=state.get("title", "this position"),
             candidate_response=last_human_message,
             first_skill=first_skill,
@@ -164,7 +169,8 @@ async def interview_node(state: InterviewState):
                 }
             
             new_skill = skills[next_idx]["name"]
-            prompt = SKILL_TRANSITION_PROMPT.format(
+            prompt_template = get_prompt("SKILL_TRANSITION_PROMPT", SKILL_TRANSITION_PROMPT)
+            prompt = prompt_template.format(
                 previous_skill=current_skill,
                 new_skill=new_skill,
                 elapsed_minutes=elapsed_minutes,
@@ -188,7 +194,8 @@ async def interview_node(state: InterviewState):
                 break
         
         new_nudge_count = nudge_count + 1
-        nudge_prompt = NUDGE_PROMPT.format(
+        prompt_template = get_prompt("NUDGE_PROMPT", NUDGE_PROMPT)
+        nudge_prompt = prompt_template.format(
             last_question=last_ai_question,
             candidate_response=last_human_message,
             nudge_count=new_nudge_count,
@@ -242,7 +249,8 @@ async def interview_node(state: InterviewState):
             role = "Interviewer" if isinstance(m, AIMessage) else "Candidate"
             transcript += f"{role}: {m.content}\n"
 
-        prompt = ADAPTIVE_INTERVIEW_PROMPT.format(
+        prompt_template = get_prompt("ADAPTIVE_INTERVIEW_PROMPT", ADAPTIVE_INTERVIEW_PROMPT)
+        prompt = prompt_template.format(
             title=state.get("title", "this position"),
             current_skill=current_skill,
             depth=next_depth if not answer_was_weak else current_depth,
