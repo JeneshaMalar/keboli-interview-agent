@@ -1,7 +1,7 @@
 from app.state import InterviewState
 from app.llm import llm
 from app.keboli_client import keboli_client
-from app.prompt_manager import SKILL_EXTRACTION_PROMPT, SkillGraph
+from app.prompt_manager import SKILL_EXTRACTION_PROMPT, SkillGraph, get_prompt
 from langchain_core.prompts import ChatPromptTemplate
 
 
@@ -36,7 +36,8 @@ async def skill_extraction_node(state: InterviewState):
         print(f"Extracting skills for assessment {assessment_id} from JD (difficulty={difficulty_level})...")
         print("LLM will analyze JD to determine experience level...")
         
-        prompt = ChatPromptTemplate.from_template(SKILL_EXTRACTION_PROMPT)
+        prompt_template = get_prompt("SKILL_EXTRACTION_PROMPT", SKILL_EXTRACTION_PROMPT)
+        prompt = ChatPromptTemplate.from_template(prompt_template)
         structured_llm = llm.with_structured_output(SkillGraph)
         
         chain = prompt | structured_llm

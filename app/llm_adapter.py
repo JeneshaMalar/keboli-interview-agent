@@ -17,11 +17,11 @@ from livekit import rtc
 from app.graph import interview_agent
 from app.state import InterviewState
 from app.keboli_client import keboli_client
+from app.observability import langfuse_handler
 from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger("keboli-llm-adapter")
 
-# ── Safety-net closing keyword detection (Approach B) ──
 CLOSING_KEYWORDS = [
     "thank you for your time",
     "that wraps up",
@@ -202,8 +202,11 @@ class InterviewLLMStream(llm.LLMStream):
                     logger.error(f"Failed to append candidate transcript: {e}")
 
             logger.info(f"Invoking LangGraph with user message: {latest_user_msg[:80]}...")
+            config = {"run_name": f"interview-{self._state['session_id']}"}
+            if langfuse_handler:
+                config["callbacks"] = [langfuse_handler]
 
-            result = await self._interview_agent.ainvoke(self._state)
+            result = await self._interview_agent.ainvoke(self._state, config=config)
 
             ai_response = ""
             for m in reversed(result.get("messages", [])):
@@ -234,12 +237,10 @@ class InterviewLLMStream(llm.LLMStream):
 
             logger.info(f"Agent response: {ai_response[:80]}...")
 
-            # ── Determine if interview should end ──
             is_completed = result.get("is_completed", False)
             closing_reason = result.get("closing_reason", "completed")
 
-            # Approach B: Safety-net — detect closing keywords in LLM response
-            # even if is_completed wasn't explicitly set by the graph
+       
             if not is_completed and _is_closing_message(ai_response):
                 logger.warning(f"Safety-net: closing keywords detected in response but is_completed=False. Forcing completion.")
                 is_completed = True
@@ -248,7 +249,6 @@ class InterviewLLMStream(llm.LLMStream):
             if is_completed:
                 logger.info(f"Interview {self._state['session_id']} marked as COMPLETED (reason={closing_reason}). Triggering evaluation...")
 
-                # Approach A: Emit interview_ended signal to frontend via LiveKit
                 await self._interview_llm._emit_interview_ended(closing_reason)
 
                 try:
