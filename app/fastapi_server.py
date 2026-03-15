@@ -122,6 +122,9 @@ async def chat(request: InterviewTurnRequest):
             "nudge_count": 0,
             "closing_phase": None,
             "closing_reason": None,
+            "time_warning_given": False,
+            "qa_phase": False,
+            "qa_turns": 0,
         }
 
     if request.last_message:
