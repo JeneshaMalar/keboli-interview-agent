@@ -73,6 +73,9 @@ class InterviewLLM(llm.LLM):
             "nudge_count": 0,
             "closing_phase": None,
             "closing_reason": None,
+            "time_warning_given": False,
+            "qa_phase": False,
+            "qa_turns": 0,
         }
 
         self._state = initial_state
@@ -101,6 +104,23 @@ class InterviewLLM(llm.LLM):
             logger.info(f"Emitted interview_ended signal (reason={reason}) to room")
         except Exception as e:
             logger.error(f"Failed to emit interview_ended: {e}")
+
+    async def _emit_timer_sync(self, remaining_seconds: int):
+        """Emit a timer_sync message so the frontend timer stays in sync with the agent."""
+        if not self._room:
+            return
+        try:
+            payload = json.dumps({
+                "type": "timer_sync",
+                "remaining_seconds": remaining_seconds,
+            }).encode("utf-8")
+            await self._room.local_participant.publish_data(
+                payload,
+                reliable=True,
+                topic="interview_control",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to emit timer_sync: {e}")
 
     def chat(
         self,
@@ -215,6 +235,11 @@ class InterviewLLMStream(llm.LLMStream):
                     break
 
             self._interview_llm._update_state(result)
+
+            total_secs = result.get("total_duration_minutes", self._state.get("total_duration_minutes", 30)) * 60
+            elapsed = self._interview_llm.get_elapsed_seconds()
+            remaining = max(0, total_secs - elapsed)
+            await self._interview_llm._emit_timer_sync(remaining)
 
             self._event_ch.send_nowait(
                 llm.ChatChunk(

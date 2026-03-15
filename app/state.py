@@ -36,3 +36,7 @@ class InterviewState(TypedDict):
     nudge_count: int  
     closing_phase: Optional[str]  # "ask_questions" -> "final_close" for two-phase closing
     closing_reason: Optional[str]  # Why the interview ended: "interview_completed", "time_limit", "candidate_exit"
+    
+    time_warning_given: bool   # True once the 5-min warning has been issued
+    qa_phase: bool             # True when we are in the 2-min grace Q&A buffer
+    qa_turns: int              # Number of Q&A turns used during grace buffer (max 2)
