@@ -7,6 +7,7 @@ from app.prompt_manager import (
     NUDGE_PROMPT,
     SKILL_TRANSITION_PROMPT,
     CLOSING_PROMPT,
+    TIME_WARNING_PROMPT,
     get_prompt
 )
 from langchain_core.messages import AIMessage, HumanMessage
@@ -69,18 +70,36 @@ async def interview_node(state: InterviewState):
 
 
     if phase == "closing_ask_questions":
+        qa_turns = state.get("qa_turns", 0)
+        remaining_time_secs = (state.get("total_duration_minutes", 30) * 60) - state.get("elapsed_time_seconds", 0)
+
+        if qa_turns >= 2 or remaining_time_secs <= 0:
+            prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
+            prompt = prompt_template.format(
+                title=state.get("title", "this position"),
+                closing_phase="final_close",
+                candidate_questions_response=last_human_message or "",
+            )
+            response = await llm.ainvoke(prompt)
+            return {
+                "messages": [AIMessage(content=response.content)],
+                "is_completed": True,
+                "conversation_phase": "completed",
+                "closing_reason": "interview_completed",
+            }
+
         prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
         prompt = prompt_template.format(
             title=state.get("title", "this position"),
-            closing_phase="final_close",
-            candidate_questions_response=last_human_message,
+            closing_phase="qa_response",
+            candidate_questions_response=last_human_message or "",
         )
         response = await llm.ainvoke(prompt)
         return {
             "messages": [AIMessage(content=response.content)],
-            "is_completed": True,
-            "conversation_phase": "completed",
-            "closing_reason": "interview_completed",
+            "qa_phase": True,
+            "qa_turns": qa_turns + 1,
+            "conversation_phase": "closing_ask_questions",  
         }
 
     if last_human_message and any(
@@ -102,6 +121,35 @@ async def interview_node(state: InterviewState):
 
     elapsed_minutes = state.get("elapsed_time_seconds", 0) // 60
     total_minutes = state.get("total_duration_minutes", 30)
+    remaining_minutes = max(0, total_minutes - elapsed_minutes)
+    time_warning_given = state.get("time_warning_given", False)
+    qa_phase = state.get("qa_phase", False)
+
+
+    if 120 < remaining_minutes * 60 <= 300 and not time_warning_given and not qa_phase:
+        prompt_template = get_prompt("TIME_WARNING_PROMPT", TIME_WARNING_PROMPT)
+        prompt = prompt_template.format(remaining_minutes=remaining_minutes)
+        response = await llm.ainvoke(prompt)
+        return {
+            "messages": [AIMessage(content=response.content)],
+            "time_warning_given": True,
+        }
+
+    if remaining_minutes * 60 <= 120 and not qa_phase and phase != "closing_ask_questions":
+        prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
+        prompt = prompt_template.format(
+            title=state.get("title", "this position"),
+            closing_phase="ask_questions",
+            candidate_questions_response="",
+        )
+        response = await llm.ainvoke(prompt)
+        return {
+            "messages": [AIMessage(content=response.content)],
+            "conversation_phase": "closing_ask_questions",
+            "qa_phase": True,
+            "qa_turns": 0,
+        }
+
 
     def _start_closing():
         """Start the closing sequence with 'ask_questions' phase."""
