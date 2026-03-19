@@ -70,7 +70,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         vad=silero.VAD.load(
             min_speech_duration=0.3,
-            min_silence_duration=0.8, 
+            min_silence_duration=0.5, 
             prefix_padding_duration=0.2,
         ),
 
