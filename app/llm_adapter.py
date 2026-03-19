@@ -43,6 +43,10 @@ def _is_closing_message(text: str) -> bool:
 
 
 class InterviewLLM(llm.LLM):
+    """
+    A custom LiveKit LLM implementation that acts as a bridge between 
+    LiveKit's real-time agents and a LangGraph-based interview state machine.
+    """
     def __init__(self, session_id: str, assessment_id: str):
         super().__init__()
         self._session_id = session_id
@@ -53,10 +57,26 @@ class InterviewLLM(llm.LLM):
         self._room: rtc.Room | None = None
 
     def set_room(self, room: rtc.Room):
-        """Set the LiveKit room reference for sending data messages."""
+        """
+        Assign the LiveKit room reference to allow the adapter to 
+        send control signals (like timer sync or interview end) to the frontend.
+
+        Args:
+            room: The active LiveKit RTC room instance.
+        """
         self._room = room
 
     async def initialize(self):
+        """
+        Setup the initial interview state, including skill tracking, 
+        timing metrics, and phase flags.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         if self._initialized:
             return
 
@@ -83,7 +103,16 @@ class InterviewLLM(llm.LLM):
         self._start_time = time.time()
 
     async def _emit_interview_ended(self, reason: str):
-        """Emit interview_ended signal to the frontend via LiveKit data message."""
+        """
+        Broadcast a 'interview_ended' signal to the frontend via 
+        the LiveKit Data Channel.
+
+        Args:
+            reason: String explaining why the interview stopped (e.g., 'completed', 'timeout').
+            
+        Returns:
+            None
+        """
         if not self._room:
             logger.warning("No room reference — cannot emit interview_ended signal")
             return
@@ -106,7 +135,16 @@ class InterviewLLM(llm.LLM):
             logger.error(f"Failed to emit interview_ended: {e}")
 
     async def _emit_timer_sync(self, remaining_seconds: int):
-        """Emit a timer_sync message so the frontend timer stays in sync with the agent."""
+        """
+        Send the current remaining interview time to the frontend 
+        to ensure the UI clock matches the agent's internal state.
+
+        Args:
+            remaining_seconds: Number of seconds left before the interview expires.
+
+        Returns:
+            None
+        """
         if not self._room:
             return
         try:
@@ -157,6 +195,11 @@ class InterviewLLM(llm.LLM):
 
 
 class InterviewLLMStream(llm.LLMStream):
+    """
+    Handles the execution logic for a single chat turn. It processes 
+    the user's voice transcript through LangGraph and streams the 
+    interviewer's response back to LiveKit.
+    """
     def __init__(
         self,
         *,
@@ -175,6 +218,17 @@ class InterviewLLMStream(llm.LLMStream):
         self._interview_agent = interview_agent
 
     async def _run(self) -> None:
+        """
+        Main execution loop for the stream. Extracts user intent, 
+        invokes the LangGraph agent, updates state, and handles 
+        session completion logic.
+
+        Args:
+            None
+
+        Returns:
+            None (streams results through self._event_ch)
+        """
         try:
             self._state["elapsed_time_seconds"] = self._interview_llm.get_elapsed_seconds()
 

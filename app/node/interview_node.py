@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 
 async def greeting_node(state: InterviewState):
+    """Initial node to greet the candidate and set the tone for the interview."""
     prompt_template = get_prompt("GREETING_PROMPT", GREETING_PROMPT)
     prompt = prompt_template.format(
         title=state.get("title", "this position"),
@@ -53,6 +54,7 @@ def _is_weak_answer(message: str) -> bool:
 
 
 async def interview_node(state: InterviewState):
+    """Core node that handles the adaptive interview logic, including skill progression, nudging, and phase transitions."""
     messages = state.get("messages", [])
     skills = state.get("skill_graph", {}).get("skills", [])
     current_idx = state.get("current_skill_index", 0)
@@ -152,6 +154,7 @@ async def interview_node(state: InterviewState):
 
 
     def _start_closing():
+        """Helper function to generate the closing prompt and transition to the closing phase."""
         """Start the closing sequence with 'ask_questions' phase."""
         prompt_template = get_prompt("CLOSING_PROMPT", CLOSING_PROMPT)
         return prompt_template.format(
