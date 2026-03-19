@@ -8,6 +8,11 @@ from app.keboli_client import keboli_client
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 import logging
+from datetime import datetime,timezone
+from fastapi.responses import JSONResponse
+from fastapi import status
+from sqlalchemy import text
+
 
 logger = logging.getLogger("keboli-fastapi")
 
@@ -22,8 +27,63 @@ class InterviewTurnRequest(BaseModel):
 class SkillGraphRequest(BaseModel):
     assessment_id: str
 
+@app.get("/health")
+async def health_check():
+    services_health = {
+        "llm": "down",
+        "keboli_client": "down"
+    }
+    
+    try:
+        if llm is not None:
+            services_health["llm"] = "ok"
+        
+        if keboli_client:
+            services_health["keboli_client"] = "ok"
+
+        is_healthy = all(v == "ok" for v in services_health.values())
+        
+        health_payload = {
+            "status": "healthy" if is_healthy else "unhealthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "services": services_health
+        }
+
+        if not is_healthy:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=health_payload
+            )
+
+        return health_payload
+
+    except Exception as e:
+        logger.error(f"Critical failure in health check endpoint: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": str(e)}
+        )
+
+
 @app.post("/generate-skill-graph")
 async def generate_skill_graph(request: SkillGraphRequest):
+    """
+    Analyze an assessment's job description to generate a structured skill graph.
+
+    This endpoint uses a structured LLM output to extract specific skills, 
+    required experience levels, and reasoning from raw text. It then 
+    persists this graph back to the assessment record.
+
+    Args:
+        request: SkillGraphRequest containing the assessment_id to analyze.
+
+    Raises:
+        HTTPException (400): If the assessment has no job description.
+        HTTPException (500): If LLM generation or database update fails.
+
+    Returns:
+        A dictionary containing the status and the generated skill_graph.
+    """
     try:
         assessment = await keboli_client.get_assessment(request.assessment_id)
         
@@ -99,6 +159,22 @@ async def generate_skill_graph(request: SkillGraphRequest):
 
 @app.post("/chat")
 async def chat(request: InterviewTurnRequest):
+    """
+    Process a single turn of the interview conversation.
+
+    This endpoint maintains the state machine for the interview. It receives 
+    the candidate's last message, runs the LangGraph agent to determine 
+    the next question or response, and returns the updated state.
+
+    Args:
+        request: InterviewTurnRequest containing session/assessment IDs and message history.
+
+    Raises:
+        HTTPException (500): If the LangGraph invocation or message serialization fails.
+
+    Returns:
+        A response payload containing the AI's response text, completion status, and serializable state.
+    """
     if request.state:
         state = request.state
         msg_objs = []
@@ -177,7 +253,6 @@ async def chat(request: InterviewTurnRequest):
             "message": f"Error processing chat turn: {str(e)}",
             "error_stack": str(e)
         })
-        print(f"Agent Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

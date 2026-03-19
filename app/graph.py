@@ -4,6 +4,10 @@ from app.node.skill_extraction_node import skill_extraction_node
 from app.node.interview_node import greeting_node, interview_node
 
 def create_interview_graph():
+    """Factory function to create and compile the interview workflow graph. 
+    It defines the nodes for skill extraction, greeting, and interviewing, 
+    and sets up the conditional routing logic based on the state of the interview."""
+    
     workflow = StateGraph(InterviewState)
 
     workflow.add_node("skill_extraction", skill_extraction_node)

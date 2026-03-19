@@ -6,6 +6,9 @@ from langchain_core.prompts import ChatPromptTemplate
 
 
 async def skill_extraction_node(state: InterviewState):
+    """Node responsible for extracting the skill graph from the job description. If the skill graph already exists in the state, 
+    it will skip extraction and just return the existing data. 
+    Otherwise, it will call the LLM to generate the skill graph and update the backend via the KeboliClient."""
     if state.get("skill_graph"):
         assessment_id = state.get("assessment_id")
         if assessment_id and not state.get("experience_level"):
@@ -27,14 +30,11 @@ async def skill_extraction_node(state: InterviewState):
     if not assessment_id:
         return state
     
-    print(f"Fetching assessment {assessment_id} for skill extraction...")
     assessment = await keboli_client.get_assessment(assessment_id)
     skill_graph = assessment.get("skill_graph")
     difficulty_level = assessment.get("difficulty_level", "medium")
 
     if not skill_graph:
-        print(f"Extracting skills for assessment {assessment_id} from JD (difficulty={difficulty_level})...")
-        print("LLM will analyze JD to determine experience level...")
         
         prompt_template = get_prompt("SKILL_EXTRACTION_PROMPT", SKILL_EXTRACTION_PROMPT)
         prompt = ChatPromptTemplate.from_template(prompt_template)
@@ -48,8 +48,7 @@ async def skill_extraction_node(state: InterviewState):
         
         skill_graph = result.model_dump()
         
-        print(f"LLM detected experience level: {skill_graph.get('experience_level')} "
-              f"— Reason: {skill_graph.get('experience_reasoning')}")
+        
         
         await keboli_client.update_assessment_skills(assessment_id, skill_graph)
     
