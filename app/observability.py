@@ -1,6 +1,7 @@
 import os
 import logging
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
+
 
 logger = logging.getLogger("keboli-observability")
 
@@ -11,11 +12,7 @@ def get_langfuse_handler():
 
     if public_key and secret_key:
         logger.info("Langfuse tracing enabled.")
-        return CallbackHandler(
-            public_key=public_key,
-            secret_key=secret_key,
-            host=host
-        )
+        return CallbackHandler()
     
     logger.warning("Langfuse credentials missing. Tracing disabled.")
     return None

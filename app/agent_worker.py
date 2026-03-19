@@ -14,7 +14,19 @@ logger.setLevel(logging.INFO)
 
 
 async def entrypoint(ctx: JobContext):
+    """
+    The main execution loop for the LiveKit AI Agent. Sets up the 
+    multimodal session and connects the LLM to the room.
 
+    Args:
+        ctx: The JobContext containing room information and connection methods.
+
+    Raises:
+        Exception: If InterviewLLM initialization or AgentSession startup fails.
+
+    Returns:
+        None (Starts an asynchronous background session)
+    """
     room_name = ctx.room.name
     logger.info(f"Agent entrypoint called for room: {room_name}")
 
