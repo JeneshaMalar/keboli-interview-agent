@@ -1,8 +1,8 @@
-from typing import List, Dict, Optional
-from pydantic import BaseModel, Field
-import os
 import logging
+import os
+
 from langfuse import Langfuse
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("keboli-prompt-manager")
 
@@ -10,37 +10,49 @@ langfuse = None
 if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
     langfuse = Langfuse()
 
+
 def get_prompt(prompt_name: str, fallback_content: str) -> str:
     """
     Fetch prompt from Langfuse with a local fallback.
     """
     if not langfuse:
         return fallback_content
-    
+
     try:
         prompt_obj = langfuse.get_prompt(prompt_name)
         return prompt_obj.prompt
     except Exception as e:
-        logger.warning(f"Could not fetch prompt '{prompt_name}' from Langfuse: {e}. Using fallback.")
+        logger.warning(
+            f"Could not fetch prompt '{prompt_name}' from Langfuse: {e}. Using fallback."
+        )
         return fallback_content
 
 
 class Skill(BaseModel):
     name: str = Field(..., description="Name of the skill")
-    description: str = Field(..., description="Brief description of why this skill is relevant to the JD")
-    category: str = Field(..., description="Category like Technical, Communication, or Confidence")
-    weightage: float = Field(..., description="Weightage of this skill (0.0 to 1.0). All weightages must sum to 1.0")
+    description: str = Field(
+        ..., description="Brief description of why this skill is relevant to the JD"
+    )
+    category: str = Field(
+        ..., description="Category like Technical, Communication, or Confidence"
+    )
+    weightage: float = Field(
+        ...,
+        description="Weightage of this skill (0.0 to 1.0). All weightages must sum to 1.0",
+    )
+
 
 class SkillGraph(BaseModel):
     experience_level: str = Field(
-        ..., 
-        description="The experience level detected from the JD. Must be one of: 'fresher', 'junior', 'mid-level', 'senior', 'lead'"
+        ...,
+        description="The experience level detected from the JD. Must be one of: 'fresher', 'junior', 'mid-level', 'senior', 'lead'",
     )
     experience_reasoning: str = Field(
-        ..., 
-        description="Brief explanation of WHY this experience level was determined from the JD (e.g., 'JD mentions 5+ years of experience and system design responsibilities')"
+        ...,
+        description="Brief explanation of WHY this experience level was determined from the JD (e.g., 'JD mentions 5+ years of experience and system design responsibilities')",
     )
-    skills: List[Skill] = Field(..., description="List of extracted skills")
+    skills: list[Skill] = Field(..., description="List of extracted skills")
+
 
 SKILL_EXTRACTION_PROMPT = """
 You are an expert technical recruiter who reads Job Descriptions the way a real human hiring manager would.
@@ -48,7 +60,7 @@ You are an expert technical recruiter who reads Job Descriptions the way a real 
 Your task:
 1. FIRST, carefully analyze the JD to determine the **experience level** the role is targeting. A real recruiter understands this from cues in the JD such as:
    - Explicit mentions: "5+ years", "fresh graduate", "entry-level", "senior", "lead", "principal", "intern"
-   - Implicit signals: complexity of responsibilities (e.g., "design scalable systems" = senior vs "assist in testing" = junior), 
+   - Implicit signals: complexity of responsibilities (e.g., "design scalable systems" = senior vs "assist in testing" = junior),
      team leadership mentions, mentoring expectations, decision-making authority, technology breadth vs depth
    - Role title cues: "Junior Developer", "Staff Engineer", "Associate", "Trainee", "Architect"
 
@@ -204,7 +216,7 @@ React to what the candidate just said with a SHORT, honest acknowledgment:
 
 - If the candidate gave an INCORRECT answer:
   → Do NOT correct them directly. Do NOT praise them.
-  → Use a probing follow-up: "Interesting — what makes you say that?" 
+  → Use a probing follow-up: "Interesting — what makes you say that?"
     or "Can you walk me through your reasoning there?"
 
 - If the candidate is clearly confused or off-topic:
@@ -280,11 +292,11 @@ Your task: Help them move forward gently WITHOUT giving away the answer.
 
 Instructions:
 - If this is nudge attempt 1:
-  - Acknowledge their attempt warmly (e.g., "No worries, let me rephrase that" 
+  - Acknowledge their attempt warmly (e.g., "No worries, let me rephrase that"
     or "That's okay, let me come at it differently").
   - Rephrase the question using simpler or more everyday language.
   - OR break the question into a smaller sub-question that is a stepping stone.
-  - Do NOT give hints toward the answer — the candidate must demonstrate 
+  - Do NOT give hints toward the answer — the candidate must demonstrate
     knowledge independently. Hints contaminate the evaluation score.
 
 - If this is nudge attempt 2:
@@ -372,9 +384,9 @@ The candidate's question was: "{candidate_questions_response}"
 The candidate's response to your question was: "{candidate_questions_response}"
 
 - If they asked a specific question, answer it briefly (1-2 sentences max).
-  If you don't know the exact answer, say: "That's a great question — 
+  If you don't know the exact answer, say: "That's a great question —
   I'd recommend checking with the hiring team directly on that one."
-- If they said they have no questions, acknowledge naturally 
+- If they said they have no questions, acknowledge naturally
   ("No worries at all — totally understand.") and then close.
 - Thank the candidate genuinely for their time and answers.
 - Mention that you've covered all the areas you wanted to.
@@ -384,5 +396,3 @@ The candidate's response to your question was: "{candidate_questions_response}"
 
 Generate ONLY your spoken response.
 """
-
-
