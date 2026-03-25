@@ -1,183 +1,301 @@
-from fastapi import FastAPI, HTTPException
+"""Keboli Interview Agent — FastAPI server.
+
+Provides HTTP endpoints for the interview chat loop and skill graph
+generation, used by both the WebSocket-based and LiveKit-based
+interview flows.
+"""
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-from typing import List, Optional
+
+from app.exceptions import AppError, ExternalServiceError, ValidationError
 from app.graph import interview_agent
+from app.keboli_client import keboli_client
 from app.llm import llm
 from app.prompt_manager import SKILL_EXTRACTION_PROMPT, SkillGraph
-from app.keboli_client import keboli_client
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.prompts import ChatPromptTemplate
-import logging
-from datetime import datetime,timezone
-from fastapi.responses import JSONResponse
-from fastapi import status
-from sqlalchemy import text
-
 
 logger = logging.getLogger("keboli-fastapi")
 
-app = FastAPI(title="Keboli Interview Agent")
+app = FastAPI(
+    title="Keboli Interview Agent",
+    description="Real-time AI interviewer API using LangGraph.",
+    version="1.0.0",
+)
+
+
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    """Convert AppError exceptions into structured JSON error responses.
+
+    Args:
+        request: The incoming HTTP request.
+        exc: The AppError instance containing error details.
+
+    Returns:
+        A JSONResponse with the appropriate status code and error body.
+    """
+    logger.error(
+        "app_error: %s (code=%s, status=%d)",
+        exc.message,
+        exc.error_code,
+        exc.status_code,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.error_code,
+                "message": exc.message,
+                "details": exc.details,
+            }
+        },
+    )
+
+
+
 
 class InterviewTurnRequest(BaseModel):
+    """Payload for a single interview chat turn."""
+
     session_id: str
     assessment_id: str
-    last_message: Optional[str] = None
-    state: Optional[dict] = None
+    last_message: str | None = None
+    state: dict[str, Any] | None = None
+
 
 class SkillGraphRequest(BaseModel):
+    """Payload for triggering skill graph generation."""
+
     assessment_id: str
 
-@app.get("/health")
-async def health_check():
-    services_health = {
-        "llm": "down",
-        "keboli_client": "down"
-    }
-    
+
+class ServiceStatus(BaseModel):
+    """Status of individual backing services."""
+
+    llm: str = "unknown"
+    keboli_client: str = "unknown"
+
+
+class HealthResponse(BaseModel):
+    """Structured health-check response."""
+
+    status: str = "ok"
+    timestamp: str = ""
+    services: ServiceStatus = ServiceStatus()
+    error: str | None = None
+
+
+class SkillGraphResponse(BaseModel):
+    """Response returned after skill graph generation."""
+
+    status: str
+    skill_graph: dict[str, Any]
+
+
+class ChatResponse(BaseModel):
+    """Response returned after processing a chat turn."""
+
+    response: str
+    is_completed: bool
+    state: dict[str, Any]
+
+
+
+
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Application health check",
+    description="Verify LLM and backend client readiness.",
+)
+async def health_check() -> JSONResponse | HealthResponse:
+    """Check application health by verifying LLM and client availability.
+
+    Returns:
+        HealthResponse with service statuses and overall health.
+    """
+    services = ServiceStatus()
+
     try:
         if llm is not None:
-            services_health["llm"] = "ok"
-        
-        if keboli_client:
-            services_health["keboli_client"] = "ok"
+            services.llm = "ok"
 
-        is_healthy = all(v == "ok" for v in services_health.values())
-        
-        health_payload = {
-            "status": "healthy" if is_healthy else "unhealthy",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "services": services_health
-        }
+        if keboli_client:
+            services.keboli_client = "ok"
+
+        is_healthy = services.llm == "ok" and services.keboli_client == "ok"
+
+        payload = HealthResponse(
+            status="healthy" if is_healthy else "unhealthy",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            services=services,
+        )
 
         if not is_healthy:
             return JSONResponse(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=health_payload
+                status_code=503,
+                content=payload.model_dump(),
             )
 
-        return health_payload
+        return payload
 
     except Exception as e:
-        logger.error(f"Critical failure in health check endpoint: {e}")
+        logger.error("Critical failure in health check endpoint: %s", e)
         return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"status": "unhealthy", "error": str(e)}
+            status_code=503,
+            content={"status": "unhealthy", "error": str(e)},
         )
 
 
-@app.post("/generate-skill-graph")
-async def generate_skill_graph(request: SkillGraphRequest):
-    """
-    Analyze an assessment's job description to generate a structured skill graph.
+@app.post(
+    "/generate-skill-graph",
+    response_model=SkillGraphResponse,
+    summary="Generate a skill graph from a job description",
+    description="Analyze an assessment's job description to extract a structured skill graph using the LLM.",
+)
+async def generate_skill_graph(request: SkillGraphRequest) -> SkillGraphResponse:
+    """Analyze an assessment's job description to generate a structured skill graph.
 
-    This endpoint uses a structured LLM output to extract specific skills, 
-    required experience levels, and reasoning from raw text. It then 
-    persists this graph back to the assessment record.
+    Uses a structured LLM output to extract specific skills,
+    required experience levels, and reasoning from raw text. Persists
+    the graph back to the assessment record.
 
     Args:
         request: SkillGraphRequest containing the assessment_id to analyze.
 
-    Raises:
-        HTTPException (400): If the assessment has no job description.
-        HTTPException (500): If LLM generation or database update fails.
-
     Returns:
-        A dictionary containing the status and the generated skill_graph.
+        SkillGraphResponse with the status and generated skill_graph.
+
+    Raises:
+        ValidationError: If the assessment has no job description.
+        ExternalServiceError: If LLM generation or database update fails.
     """
     try:
         assessment = await keboli_client.get_assessment(request.assessment_id)
-        
+
         existing_graph = assessment.get("skill_graph")
         if existing_graph:
-            return {"status": "exists", "skill_graph": existing_graph}
-        
+            return SkillGraphResponse(status="exists", skill_graph=existing_graph)
+
         job_description = assessment.get("job_description")
         if not job_description:
-            raise HTTPException(status_code=400, detail="Assessment has no job description")
-        
+            raise ValidationError(
+                message="Assessment has no job description",
+                field="job_description",
+            )
+
         difficulty_level = assessment.get("difficulty_level", "medium")
-        
-        logger.info(f"Generating skill graph for assessment {request.assessment_id} "
-                     f"(difficulty={difficulty_level}). LLM will analyze JD to determine experience level.")
-                     
-        await keboli_client.post_log({
-            "level": "INFO",
-            "service": "interview_agent",
-            "component": "skill_graph",
-            "event_type": "graph_generation_started",
-            "assessment_id": request.assessment_id,
-            "message": f"Started skill graph generation for assessment {request.assessment_id} (difficulty={difficulty_level})"
-        })
-        
+
+        logger.info(
+            "Generating skill graph for assessment %s (difficulty=%s).",
+            request.assessment_id,
+            difficulty_level,
+        )
+
+        await keboli_client.post_log(
+            {
+                "level": "INFO",
+                "service": "interview_agent",
+                "component": "skill_graph",
+                "event_type": "graph_generation_started",
+                "assessment_id": request.assessment_id,
+                "message": f"Started skill graph generation for assessment {request.assessment_id} (difficulty={difficulty_level})",
+            }
+        )
+
         prompt = ChatPromptTemplate.from_template(SKILL_EXTRACTION_PROMPT)
         structured_llm = llm.with_structured_output(SkillGraph)
         chain = prompt | structured_llm
-        
-        result = await chain.ainvoke({
-            "job_description": job_description,
-            "difficulty_level": difficulty_level,
-        })
-        
-        skill_graph = result.model_dump()
-        
-        logger.info(f"Skill graph generated — experience_level={skill_graph.get('experience_level')}, "
-                     f"reason={skill_graph.get('experience_reasoning')}, "
-                     f"{len(skill_graph.get('skills', []))} skills extracted")
-                     
-        await keboli_client.post_log({
-            "level": "INFO",
-            "service": "interview_agent",
-            "component": "skill_graph",
-            "event_type": "graph_generation_completed",
-            "assessment_id": request.assessment_id,
-            "message": "Skill graph generated successfully",
-            "details": {
-                "experience_level": skill_graph.get('experience_level'),
-                "skills_extracted": len(skill_graph.get('skills', []))
+
+        result = await chain.ainvoke(
+            {
+                "job_description": job_description,
+                "difficulty_level": difficulty_level,
             }
-        })
-        
+        )
+
+        skill_graph: dict[str, Any] = result  
+
+        logger.info(
+            "Skill graph generated — experience_level=%s, %d skills extracted",
+            skill_graph.get("experience_level"),
+            len(skill_graph.get("skills", [])),
+        )
+
+        await keboli_client.post_log(
+            {
+                "level": "INFO",
+                "service": "interview_agent",
+                "component": "skill_graph",
+                "event_type": "graph_generation_completed",
+                "assessment_id": request.assessment_id,
+                "message": "Skill graph generated successfully",
+                "details": {
+                    "experience_level": skill_graph.get("experience_level"),
+                    "skills_extracted": len(skill_graph.get("skills", [])),
+                },
+            }
+        )
+
         await keboli_client.update_assessment_skills(request.assessment_id, skill_graph)
-        
-        return {"status": "generated", "skill_graph": skill_graph}
-        
-    except HTTPException:
+
+        return SkillGraphResponse(status="generated", skill_graph=skill_graph)
+
+    except AppError:
         raise
     except Exception as e:
-        await keboli_client.post_log({
-            "level": "ERROR",
-            "service": "interview_agent",
-            "component": "skill_graph",
-            "event_type": "graph_generation_failed",
-            "assessment_id": request.assessment_id,
-            "message": f"Error generating skill graph: {str(e)}",
-            "error_stack": str(e)
-        })
-        logger.error(f"Error generating skill graph: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to generate skill graph: {str(e)}")
+        await keboli_client.post_log(
+            {
+                "level": "ERROR",
+                "service": "interview_agent",
+                "component": "skill_graph",
+                "event_type": "graph_generation_failed",
+                "assessment_id": request.assessment_id,
+                "message": f"Error generating skill graph: {e!s}",
+                "error_stack": str(e),
+            }
+        )
+        logger.error("Error generating skill graph: %s", e, exc_info=True)
+        raise ExternalServiceError(
+            service_name="LLM",
+            message=f"Failed to generate skill graph: {e!s}",
+        ) from e
 
 
-@app.post("/chat")
-async def chat(request: InterviewTurnRequest):
-    """
-    Process a single turn of the interview conversation.
+@app.post(
+    "/chat",
+    response_model=ChatResponse,
+    summary="Process a single interview chat turn",
+    description="Receives the candidate's message, runs the LangGraph agent, and returns the interviewer's response.",
+)
+async def chat(request: InterviewTurnRequest) -> ChatResponse:
+    """Process a single turn of the interview conversation.
 
-    This endpoint maintains the state machine for the interview. It receives 
-    the candidate's last message, runs the LangGraph agent to determine 
+    Maintains the state machine for the interview. Receives the
+    candidate's last message, runs the LangGraph agent to determine
     the next question or response, and returns the updated state.
 
     Args:
         request: InterviewTurnRequest containing session/assessment IDs and message history.
 
-    Raises:
-        HTTPException (500): If the LangGraph invocation or message serialization fails.
-
     Returns:
-        A response payload containing the AI's response text, completion status, and serializable state.
+        ChatResponse with the AI's response, completion status, and serializable state.
+
+    Raises:
+        AppError: If the LangGraph invocation or message serialization fails.
     """
     if request.state:
-        state = request.state
-        msg_objs = []
+        state: dict[str, Any] = request.state
+        msg_objs: list[HumanMessage | AIMessage] = []
         for m in state.get("messages", []):
             if m["role"] == "human":
                 msg_objs.append(HumanMessage(content=m["content"]))
@@ -207,55 +325,90 @@ async def chat(request: InterviewTurnRequest):
         state["messages"].append(HumanMessage(content=request.last_message))
 
     try:
-        final_state = await interview_agent.ainvoke(state)
-        
+        final_state: dict[str, Any] = await interview_agent.ainvoke(state)
+
         last_ai_message = ""
         for m in reversed(final_state["messages"]):
             if isinstance(m, AIMessage):
-                last_ai_message = m.content
+                content = m.content
+                last_ai_message = (
+                    str(content)
+                    if isinstance(content, str)
+                    else str(content[0])
+                    if isinstance(content, list) and content
+                    else ""
+                )
                 break
-        serializable_messages = []
+
+        serializable_messages: list[dict[str, str]] = []
         for m in final_state["messages"]:
             if isinstance(m, HumanMessage):
-                serializable_messages.append({"role": "human", "content": m.content})
+                hcontent = m.content
+                hstr = (
+                    str(hcontent)
+                    if isinstance(hcontent, str)
+                    else str(hcontent[0])
+                    if isinstance(hcontent, list) and hcontent
+                    else ""
+                )
+                serializable_messages.append({"role": "human", "content": hstr})
             elif isinstance(m, AIMessage):
-                serializable_messages.append({"role": "ai", "content": m.content})
+                acontent = m.content
+                astr = (
+                    str(acontent)
+                    if isinstance(acontent, str)
+                    else str(acontent[0])
+                    if isinstance(acontent, list) and acontent
+                    else ""
+                )
+                serializable_messages.append({"role": "ai", "content": astr})
 
-        response_payload = {
-            "response": last_ai_message,
-            "is_completed": final_state.get("is_completed", False),
-            "state": {
-                **{k: v for k, v in final_state.items() if k != "messages"},
-                "messages": serializable_messages
-            }
+        response_state: dict[str, Any] = {
+            **{k: v for k, v in final_state.items() if k != "messages"},
+            "messages": serializable_messages,
         }
-        
-        await keboli_client.post_log({
-            "level": "INFO",
-            "service": "interview_agent",
-            "component": "chat",
-            "event_type": "chat_turn_completed",
-            "session_id": request.session_id,
-            "assessment_id": request.assessment_id,
-            "message": "Processed interview chat turn",
-            "details": {"is_completed": final_state.get("is_completed", False)}
-        })
-        
-        return response_payload
+
+        await keboli_client.post_log(
+            {
+                "level": "INFO",
+                "service": "interview_agent",
+                "component": "chat",
+                "event_type": "chat_turn_completed",
+                "session_id": request.session_id,
+                "assessment_id": request.assessment_id,
+                "message": "Processed interview chat turn",
+                "details": {"is_completed": final_state.get("is_completed", False)},
+            }
+        )
+
+        return ChatResponse(
+            response=last_ai_message,
+            is_completed=final_state.get("is_completed", False),
+            state=response_state,
+        )
+    except AppError:
+        raise
     except Exception as e:
-        await keboli_client.post_log({
-            "level": "ERROR",
-            "service": "interview_agent",
-            "component": "chat",
-            "event_type": "chat_turn_failed",
-            "session_id": request.session_id,
-            "assessment_id": request.assessment_id,
-            "message": f"Error processing chat turn: {str(e)}",
-            "error_stack": str(e)
-        })
-        raise HTTPException(status_code=500, detail=str(e))
+        await keboli_client.post_log(
+            {
+                "level": "ERROR",
+                "service": "interview_agent",
+                "component": "chat",
+                "event_type": "chat_turn_failed",
+                "session_id": request.session_id,
+                "assessment_id": request.assessment_id,
+                "message": f"Error processing chat turn: {e!s}",
+                "error_stack": str(e),
+            }
+        )
+        raise AppError(
+            message=f"Chat turn failed: {e!s}",
+            status_code=500,
+            error_code="CHAT_TURN_FAILED",
+        ) from e
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
 
+    uvicorn.run(app, host="0.0.0.0", port=8001)
