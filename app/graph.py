@@ -1,13 +1,22 @@
-from langgraph.graph import StateGraph, END
-from app.state import InterviewState
-from app.node.skill_extraction_node import skill_extraction_node
-from app.node.interview_node import greeting_node, interview_node
+"""Interview workflow graph — Compiles the LangGraph state machine."""
 
-def create_interview_graph():
-    """Factory function to create and compile the interview workflow graph. 
-    It defines the nodes for skill extraction, greeting, and interviewing, 
-    and sets up the conditional routing logic based on the state of the interview."""
-    
+from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
+from app.node.interview_node import greeting_node, interview_node
+from app.node.skill_extraction_node import skill_extraction_node
+from app.state import InterviewState
+
+
+def create_interview_graph() -> CompiledStateGraph:  
+    """Factory function to create and compile the interview workflow graph.
+
+    Defines nodes for skill extraction, greeting, and interviewing,
+    and sets up conditional routing based on the interview state.
+
+    Returns:
+        A compiled LangGraph state machine ready for invocation.
+    """
     workflow = StateGraph(InterviewState)
 
     workflow.add_node("skill_extraction", skill_extraction_node)
@@ -16,7 +25,7 @@ def create_interview_graph():
 
     workflow.set_entry_point("skill_extraction")
 
-    def router(state: InterviewState):
+    def router(state: InterviewState) -> str:
         if len(state.get("messages", [])) <= 1:
             return "greeting"
         return "interview"
@@ -26,14 +35,13 @@ def create_interview_graph():
         router,
         {
             "greeting": "greeting",
-            "interview": "interview"
-        }
+            "interview": "interview",
+        },
     )
     workflow.add_edge("greeting", END)
     workflow.add_edge("interview", END)
-    
-  
-    
+
     return workflow.compile()
+
 
 interview_agent = create_interview_graph()

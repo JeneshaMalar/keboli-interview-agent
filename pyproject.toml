@@ -1,7 +1,7 @@
 [project]
 name = "interview-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Keboli Interview Agent — Real-time AI interviewer using LiveKit and LangGraph"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -11,8 +11,8 @@ dependencies = [
     "langchain-groq>=1.1.2",
     "langgraph>=1.0.9",
     "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
     "SQLAlchemy>=2.0",
-    "python-dotenv>=1.2.1",
     "httpx>=0.28.0",
     "livekit-agents[turn-detector]>=1.4.0",
     "livekit-plugins-deepgram>=1.4.0",
@@ -21,8 +21,46 @@ dependencies = [
     "livekit-plugins-bey>=0.2.0",
     "onnxruntime<1.20.0",
     "livekit>=1.1.2",
-    "dotenv>=0.9.9",
     "langfuse>=2.57.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+    "pre-commit>=4.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+]
 
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "N", "SIM", "C4"]
+ignore = ["E501", "B008", "N999"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true

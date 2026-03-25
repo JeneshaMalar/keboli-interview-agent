@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import AsyncIterable
+from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage
+from livekit import rtc
 from livekit.agents import llm
 from livekit.agents.types import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -12,13 +14,10 @@ from livekit.agents.types import (
     APIConnectOptions,
     NotGivenOr,
 )
-from livekit import rtc
 
 from app.graph import interview_agent
-from app.state import InterviewState
 from app.keboli_client import keboli_client
 from app.observability import langfuse_handler
-from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger("keboli-llm-adapter")
 
@@ -42,23 +41,24 @@ def _is_closing_message(text: str) -> bool:
     return any(kw in text_lower for kw in CLOSING_KEYWORDS)
 
 
-class InterviewLLM(llm.LLM):
+class InterviewLLM(llm.LLM):  # type: ignore[type-arg]
     """
-    A custom LiveKit LLM implementation that acts as a bridge between 
+    A custom LiveKit LLM implementation that acts as a bridge between
     LiveKit's real-time agents and a LangGraph-based interview state machine.
     """
+
     def __init__(self, session_id: str, assessment_id: str):
         super().__init__()
         self._session_id = session_id
         self._assessment_id = assessment_id
-        self._state: dict | None = None
+        self._state: dict[str, Any] | None = None
         self._initialized = False
         self._start_time: float | None = None
         self._room: rtc.Room | None = None
 
-    def set_room(self, room: rtc.Room):
+    def set_room(self, room: rtc.Room) -> None:
         """
-        Assign the LiveKit room reference to allow the adapter to 
+        Assign the LiveKit room reference to allow the adapter to
         send control signals (like timer sync or interview end) to the frontend.
 
         Args:
@@ -66,9 +66,9 @@ class InterviewLLM(llm.LLM):
         """
         self._room = room
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """
-        Setup the initial interview state, including skill tracking, 
+        Setup the initial interview state, including skill tracking,
         timing metrics, and phase flags.
 
         Args:
@@ -80,7 +80,9 @@ class InterviewLLM(llm.LLM):
         if self._initialized:
             return
 
-        logger.info(f"Initializing interview state for assessment {self._assessment_id}")
+        logger.info(
+            f"Initializing interview state for assessment {self._assessment_id}"
+        )
 
         initial_state = {
             "session_id": self._session_id,
@@ -102,14 +104,14 @@ class InterviewLLM(llm.LLM):
         self._initialized = True
         self._start_time = time.time()
 
-    async def _emit_interview_ended(self, reason: str):
+    async def _emit_interview_ended(self, reason: str) -> None:
         """
-        Broadcast a 'interview_ended' signal to the frontend via 
+        Broadcast a 'interview_ended' signal to the frontend via
         the LiveKit Data Channel.
 
         Args:
             reason: String explaining why the interview stopped (e.g., 'completed', 'timeout').
-            
+
         Returns:
             None
         """
@@ -118,12 +120,14 @@ class InterviewLLM(llm.LLM):
             return
 
         try:
-            payload = json.dumps({
-                "type": "interview_ended",
-                "reason": reason,
-                "auto_submit": True,
-                "session_id": self._session_id,
-            }).encode("utf-8")
+            payload = json.dumps(
+                {
+                    "type": "interview_ended",
+                    "reason": reason,
+                    "auto_submit": True,
+                    "session_id": self._session_id,
+                }
+            ).encode("utf-8")
 
             await self._room.local_participant.publish_data(
                 payload,
@@ -134,9 +138,9 @@ class InterviewLLM(llm.LLM):
         except Exception as e:
             logger.error(f"Failed to emit interview_ended: {e}")
 
-    async def _emit_timer_sync(self, remaining_seconds: int):
+    async def _emit_timer_sync(self, remaining_seconds: int) -> None:
         """
-        Send the current remaining interview time to the frontend 
+        Send the current remaining interview time to the frontend
         to ensure the UI clock matches the agent's internal state.
 
         Args:
@@ -148,10 +152,12 @@ class InterviewLLM(llm.LLM):
         if not self._room:
             return
         try:
-            payload = json.dumps({
-                "type": "timer_sync",
-                "remaining_seconds": remaining_seconds,
-            }).encode("utf-8")
+            payload = json.dumps(
+                {
+                    "type": "timer_sync",
+                    "remaining_seconds": remaining_seconds,
+                }
+            ).encode("utf-8")
             await self._room.local_participant.publish_data(
                 payload,
                 reliable=True,
@@ -165,21 +171,21 @@ class InterviewLLM(llm.LLM):
         *,
         chat_ctx: llm.ChatContext,
         tools: list[llm.Tool] | None = None,
-        tool_choice: llm.ToolChoice | None = None,
+        tool_choice: llm.ToolChoice | None = None,  # type: ignore[override]
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
         parallel_tool_calls: NotGivenOr[bool] = NOT_GIVEN,
-        **kwargs,
-    ) -> "InterviewLLMStream":
+        **kwargs: Any,
+    ) -> InterviewLLMStream:
         return InterviewLLMStream(
             llm=self,
             chat_ctx=chat_ctx,
             tools=tools or [],
             conn_options=conn_options,
-            state=self._state,
+            state=self._state or {},
             interview_agent=interview_agent,
         )
 
-    def _update_state(self, new_state: dict):
+    def _update_state(self, new_state: dict[str, Any]) -> None:
         if self._state is None:
             self._state = {}
         for key, value in new_state.items():
@@ -196,10 +202,11 @@ class InterviewLLM(llm.LLM):
 
 class InterviewLLMStream(llm.LLMStream):
     """
-    Handles the execution logic for a single chat turn. It processes 
-    the user's voice transcript through LangGraph and streams the 
+    Handles the execution logic for a single chat turn. It processes
+    the user's voice transcript through LangGraph and streams the
     interviewer's response back to LiveKit.
     """
+
     def __init__(
         self,
         *,
@@ -207,8 +214,8 @@ class InterviewLLMStream(llm.LLMStream):
         chat_ctx: llm.ChatContext,
         tools: list[llm.Tool],
         conn_options: APIConnectOptions,
-        state: dict,
-        interview_agent,
+        state: dict[str, Any],
+        interview_agent: Any,
     ):
         super().__init__(
             llm=llm, chat_ctx=chat_ctx, tools=tools, conn_options=conn_options
@@ -219,8 +226,8 @@ class InterviewLLMStream(llm.LLMStream):
 
     async def _run(self) -> None:
         """
-        Main execution loop for the stream. Extracts user intent, 
-        invokes the LangGraph agent, updates state, and handles 
+        Main execution loop for the stream. Extracts user intent,
+        invokes the LangGraph agent, updates state, and handles
         session completion logic.
 
         Args:
@@ -230,29 +237,34 @@ class InterviewLLMStream(llm.LLMStream):
             None (streams results through self._event_ch)
         """
         try:
-            self._state["elapsed_time_seconds"] = self._interview_llm.get_elapsed_seconds()
+            self._state["elapsed_time_seconds"] = (
+                self._interview_llm.get_elapsed_seconds()
+            )
 
             latest_user_msg = ""
             with open("/tmp/keboli_debug.log", "a") as f:
-                f.write(f"\n--- Chat Turn ---\n")
+                f.write("\n--- Chat Turn ---\n")
                 f.write(f"Chat Context Items: {len(self._chat_ctx.items)}\n")
                 for i, msg in enumerate(self._chat_ctx.items):
                     role = getattr(msg, "role", "N/A")
                     content_type = type(getattr(msg, "content", None))
-                    f.write(f"Item {i}: role={role} (type={type(msg)}), content_type={content_type}\n")
-            
+                    f.write(
+                        f"Item {i}: role={role} (type={type(msg)}), content_type={content_type}\n"
+                    )
+
             for msg in reversed(self._chat_ctx.items):
-                if not hasattr(msg, "role") or not hasattr(msg, "content"):
+                if not getattr(msg, "role", None) or not getattr(msg, "content", None):
                     continue
-                    
-                role_str = str(msg.role).lower()
+
+                role_str = str(getattr(msg, "role", "")).lower()
                 if "user" in role_str or "human" in role_str:
-                    if isinstance(msg.content, str):
-                        latest_user_msg = msg.content
-                    elif isinstance(msg.content, list):
-                        for part in msg.content:
+                    msg_content = getattr(msg, "content", "")
+                    if isinstance(msg_content, str):
+                        latest_user_msg = msg_content
+                    elif isinstance(msg_content, list):
+                        for part in msg_content:
                             if hasattr(part, "text"):
-                                latest_user_msg = part.text
+                                latest_user_msg = str(getattr(part, "text", ""))
                                 break
                             elif isinstance(part, str):
                                 latest_user_msg = part
@@ -262,21 +274,21 @@ class InterviewLLMStream(llm.LLMStream):
             if latest_user_msg:
                 with open("/tmp/keboli_debug.log", "a") as f:
                     f.write(f"Extracted user message: {latest_user_msg}\n")
-                
-                self._state["messages"].append(
-                    HumanMessage(content=latest_user_msg)
-                )
+
+                self._state["messages"].append(HumanMessage(content=latest_user_msg))
                 try:
                     await keboli_client.append_transcript(
-                        self._state["session_id"], 
-                        "candidate", 
-                        latest_user_msg
+                        self._state["session_id"], "candidate", latest_user_msg
                     )
                 except Exception as e:
                     logger.error(f"Failed to append candidate transcript: {e}")
 
-            logger.info(f"Invoking LangGraph with user message: {latest_user_msg[:80]}...")
-            config = {"run_name": f"interview-{self._state['session_id']}"}
+            logger.info(
+                f"Invoking LangGraph with user message: {latest_user_msg[:80]}..."
+            )
+            config: dict[str, Any] = {
+                "run_name": f"interview-{self._state['session_id']}"
+            }
             if langfuse_handler:
                 config["callbacks"] = [langfuse_handler]
 
@@ -285,12 +297,25 @@ class InterviewLLMStream(llm.LLMStream):
             ai_response = ""
             for m in reversed(result.get("messages", [])):
                 if isinstance(m, AIMessage):
-                    ai_response = m.content
+                    content = m.content
+                    ai_response = (
+                        str(content)
+                        if isinstance(content, str)
+                        else str(content[0])
+                        if isinstance(content, list) and content
+                        else ""
+                    )
                     break
 
             self._interview_llm._update_state(result)
 
-            total_secs = result.get("total_duration_minutes", self._state.get("total_duration_minutes", 30)) * 60
+            total_secs = (
+                result.get(
+                    "total_duration_minutes",
+                    self._state.get("total_duration_minutes", 30),
+                )
+                * 60
+            )
             elapsed = self._interview_llm.get_elapsed_seconds()
             remaining = max(0, total_secs - elapsed)
             await self._interview_llm._emit_timer_sync(remaining)
@@ -307,9 +332,7 @@ class InterviewLLMStream(llm.LLMStream):
 
             try:
                 await keboli_client.append_transcript(
-                    self._state["session_id"], 
-                    "interviewer", 
-                    ai_response
+                    self._state["session_id"], "interviewer", ai_response
                 )
             except Exception as e:
                 logger.warning(f"Failed to append interviewer transcript: {e}")
@@ -319,14 +342,17 @@ class InterviewLLMStream(llm.LLMStream):
             is_completed = result.get("is_completed", False)
             closing_reason = result.get("closing_reason", "completed")
 
-       
             if not is_completed and _is_closing_message(ai_response):
-                logger.warning(f"Safety-net: closing keywords detected in response but is_completed=False. Forcing completion.")
+                logger.warning(
+                    "Safety-net: closing keywords detected in response but is_completed=False. Forcing completion."
+                )
                 is_completed = True
                 closing_reason = "auto_detected_closing"
 
             if is_completed:
-                logger.info(f"Interview {self._state['session_id']} marked as COMPLETED (reason={closing_reason}). Triggering evaluation...")
+                logger.info(
+                    f"Interview {self._state['session_id']} marked as COMPLETED (reason={closing_reason}). Triggering evaluation..."
+                )
 
                 await self._interview_llm._emit_interview_ended(closing_reason)
 

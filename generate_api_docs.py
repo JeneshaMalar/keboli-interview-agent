@@ -7,7 +7,7 @@ input_file = Path("docs/openapi.json")
 output_file = Path("docs/API_Documentation.md")
 
 # Load OpenAPI JSON
-with open(input_file, "r", encoding="utf-8") as f:
+with open(input_file, "r", encoding="utf-8") as f:  # noqa: UP015
     data = json.load(f)
 
 # Metadata
@@ -59,4 +59,3 @@ for path, methods in paths.items():
 # Write output file
 output_file.write_text("\n".join(md), encoding="utf-8")
 print(f"✅ Documentation generated at {output_file}")
-
