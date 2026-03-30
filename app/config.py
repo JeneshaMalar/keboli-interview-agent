@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     DEEPGRAM_API_KEY: str | None = None
     BEY_API_KEY: str | None = None
 
-    model_config = SettingsConfigDict(env_file=".env", extra="forbid")
+    DEBUG_LOG_PATH: str | None = None
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()

@@ -37,7 +37,7 @@ class KeboliClient:
                 f"{self.base_url}/api/assessment/{assessment_id}"
             )
             response.raise_for_status()
-            return response.json()  
+            return response.json()
 
     async def update_assessment_skills(
         self, assessment_id: str, skill_graph: dict[str, object]
@@ -61,7 +61,7 @@ class KeboliClient:
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()  
+            return response.json()
 
     async def append_transcript(
         self, session_id: str, role: str, content: str
@@ -86,7 +86,7 @@ class KeboliClient:
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()  
+            return response.json()
 
     async def complete_session(self, session_id: str) -> dict[str, Any]:
         """Mark an interview session as complete in the backend.
@@ -102,13 +102,15 @@ class KeboliClient:
         Raises:
             httpx.HTTPStatusError: If the backend returns a non-2xx response.
         """
+        payload = {"session_id": session_id}
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.base_url}/api/livekit/session/{session_id}/complete",
+                f"{self.base_url}/api/livekit/complete",
+                json=payload,
                 timeout=300.0,
             )
             response.raise_for_status()
-            return response.json() 
+            return response.json()
 
     async def post_log(self, log_data: dict[str, object]) -> dict[str, Any] | None:
         """Post a log entry to the backend logging endpoint.
@@ -129,9 +131,9 @@ class KeboliClient:
                     json=log_data,
                 )
                 response.raise_for_status()
-                return response.json() 
-            except Exception as e:
-                logger.error("Failed to post log to backend: %s", e)
+                return response.json()
+            except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
+                logger.exception("Failed to post log to backend: %s", e)
                 return None
 
 

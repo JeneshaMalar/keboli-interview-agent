@@ -1,0 +1,18 @@
+# Production dependencies — mirrored from pyproject.toml [project.dependencies]
+fastapi>=0.131.0
+uvicorn[standard]>=0.41.0
+langchain>=0.3.0
+langchain-groq>=1.1.2
+langgraph>=1.0.9
+pydantic>=2.12.5
+pydantic-settings>=2.13.1
+SQLAlchemy>=2.0
+httpx>=0.28.0
+livekit-agents[turn-detector]>=1.4.0
+livekit-plugins-deepgram>=1.4.0
+livekit-plugins-silero>=1.4.0
+livekit-plugins-turn-detector>=1.4.0
+livekit-plugins-bey>=0.2.0
+onnxruntime<1.20.0
+livekit>=1.1.2
+langfuse>=2.57.0

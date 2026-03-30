@@ -1,3 +1,10 @@
+"""Prompt management and Langfuse integration for the interview agent.
+
+Provides prompt fetching from Langfuse with local fallbacks, and defines
+the Pydantic models (Skill, SkillGraph) used for structured LLM output
+during skill extraction.
+"""
+
 import logging
 import os
 
@@ -12,8 +19,15 @@ if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
 
 
 def get_prompt(prompt_name: str, fallback_content: str) -> str:
-    """
-    Fetch prompt from Langfuse with a local fallback.
+    """Fetch a prompt from Langfuse by name, falling back to local content.
+
+    Args:
+        prompt_name: The Langfuse prompt identifier.
+        fallback_content: The local prompt template to use if Langfuse
+                          is unavailable or the prompt is not found.
+
+    Returns:
+        The prompt template string.
     """
     if not langfuse:
         return fallback_content
@@ -21,14 +35,19 @@ def get_prompt(prompt_name: str, fallback_content: str) -> str:
     try:
         prompt_obj = langfuse.get_prompt(prompt_name)
         return prompt_obj.prompt
-    except Exception as e:
+    except Exception as e:  
         logger.warning(
-            f"Could not fetch prompt '{prompt_name}' from Langfuse: {e}. Using fallback."
+            "Could not fetch prompt '%s' from Langfuse: %s. Using fallback.",
+            prompt_name,
+            e,
+            exc_info=True,
         )
         return fallback_content
 
 
 class Skill(BaseModel):
+    """A single skill extracted from a job description for interview assessment."""
+
     name: str = Field(..., description="Name of the skill")
     description: str = Field(
         ..., description="Brief description of why this skill is relevant to the JD"
@@ -43,6 +62,8 @@ class Skill(BaseModel):
 
 
 class SkillGraph(BaseModel):
+    """Structured output from skill extraction, containing experience level and skill list."""
+
     experience_level: str = Field(
         ...,
         description="The experience level detected from the JD. Must be one of: 'fresher', 'junior', 'mid-level', 'senior', 'lead'",

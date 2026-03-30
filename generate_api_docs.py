@@ -1,6 +1,15 @@
+"""Generate Markdown API documentation from an OpenAPI JSON schema.
+
+Reads the OpenAPI spec from ``docs/openapi.json`` and produces a
+human-readable Markdown file at ``docs/API_Documentation.md``.
+"""
+
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger("keboli-api-docs")
 
 # Paths
 input_file = Path("docs/openapi.json")
@@ -58,4 +67,4 @@ for path, methods in paths.items():
 
 # Write output file
 output_file.write_text("\n".join(md), encoding="utf-8")
-print(f"✅ Documentation generated at {output_file}")
+logger.info("Documentation generated at %s", output_file)
