@@ -3,6 +3,7 @@
 import operator
 from typing import Annotated, TypedDict
 
+from langchain_core.messages import BaseMessage
 
 class SkillScore(TypedDict):
     """Individual skill evaluation result."""
@@ -30,7 +31,7 @@ class InterviewState(TypedDict):
     experience_level: str | None
     experience_reasoning: str | None
 
-    messages: Annotated[list[dict[str, str]], operator.add]
+    messages: Annotated[list[BaseMessage], operator.add]
     current_skill_index: int
     current_skill_depth: int
     total_duration_minutes: int
@@ -51,3 +52,24 @@ class InterviewState(TypedDict):
     time_warning_given: bool
     qa_phase: bool
     qa_turns: int
+
+    # Timing / pacing config
+    active_interview_ratio: float
+    closing_phase_ratio: float
+    finalization_buffer_seconds: int
+    max_nudges_per_skill: int
+    max_depth_per_skill: int
+    max_qa_turns: int
+    min_remaining_time_for_new_skill_seconds: int
+    min_remaining_time_for_followup_seconds: int
+
+    # Dynamic pacing runtime state
+    total_skills_count: int
+    skills_remaining_count: int
+    current_question_started_at: int | None
+    current_question_elapsed_seconds: int
+    current_skill_question_count: int
+    interview_locked: bool
+    finalization_started: bool
+    time_warning_threshold_seconds: int
+    closing_threshold_seconds: int

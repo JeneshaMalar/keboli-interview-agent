@@ -1,5 +1,13 @@
+"""Skill extraction node for the interview LangGraph workflow.
+
+Responsible for extracting a structured skill graph from a job description
+using the LLM, or reusing an existing skill graph if already present in state.
+"""
+
+import logging
 from typing import Any
 
+import httpx
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.keboli_client import keboli_client
@@ -7,11 +15,24 @@ from app.llm import llm
 from app.prompt_manager import SKILL_EXTRACTION_PROMPT, SkillGraph
 from app.state import InterviewState
 
+logger = logging.getLogger("keboli-skill-extraction")
+
 
 async def skill_extraction_node(state: InterviewState) -> dict[str, Any]:
-    """Node responsible for extracting the skill graph from the job description. If the skill graph already exists in the state,
-    it will skip extraction and just return the existing data.
-    Otherwise, it will call the LLM to generate the skill graph and update the backend via the KeboliClient."""
+    """Extract the skill graph from the job description.
+
+    If a skill graph already exists in the state, this node returns
+    the existing data without re-extraction. Otherwise, it invokes
+    the LLM to generate a structured skill graph and persists the
+    result to the backend via the KeboliClient.
+
+    Args:
+        state: The current interview state dict.
+
+    Returns:
+        Updated state dict with skill_graph, experience_level, and
+        related metadata.
+    """
     if state.get("skill_graph"):
         return {
             "skill_graph": state["skill_graph"],
@@ -26,6 +47,9 @@ async def skill_extraction_node(state: InterviewState) -> dict[str, Any]:
             "current_skill_index": 0,
             "current_skill_depth": 0,
         }
+
+    assessment = {}
+    difficulty_level = "medium"
 
     try:
         assessment = await keboli_client.get_assessment(assessment_id)
@@ -55,7 +79,11 @@ async def skill_extraction_node(state: InterviewState) -> dict[str, Any]:
 
         await keboli_client.update_assessment_skills(assessment_id, skill_graph)
 
-    except Exception:
+    except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.exception("Failed to fetch assessment or call LLM: %s", e)
+        skill_graph = {}
+    except (ValueError, TypeError) as e:
+        logger.exception("Failed to parse skill graph output: %s", e)
         skill_graph = {}
 
     experience_level = skill_graph.get("experience_level", "mid-level")

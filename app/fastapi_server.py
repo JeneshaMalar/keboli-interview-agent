@@ -109,6 +109,18 @@ class ChatResponse(BaseModel):
     state: dict[str, Any]
 
 
+def _check_service_health() -> ServiceStatus:
+    """Probe backing services and return their status.
+
+    Returns:
+        ServiceStatus with the current state of each service.
+    """
+    services = ServiceStatus()
+    if llm is not None:
+        services.llm = "ok"
+    if keboli_client:
+        services.keboli_client = "ok"
+    return services
 
 
 @app.get(
@@ -123,15 +135,8 @@ async def health_check() -> JSONResponse | HealthResponse:
     Returns:
         HealthResponse with service statuses and overall health.
     """
-    services = ServiceStatus()
-
     try:
-        if llm is not None:
-            services.llm = "ok"
-
-        if keboli_client:
-            services.keboli_client = "ok"
-
+        services = _check_service_health()
         is_healthy = services.llm == "ok" and services.keboli_client == "ok"
 
         payload = HealthResponse(
@@ -148,12 +153,54 @@ async def health_check() -> JSONResponse | HealthResponse:
 
         return payload
 
-    except Exception as e:
-        logger.error("Critical failure in health check endpoint: %s", e)
+    except (RuntimeError, ValueError) as e:
+        logger.exception("Critical failure in health check endpoint: %s", e)
         return JSONResponse(
             status_code=503,
             content={"status": "unhealthy", "error": str(e)},
         )
+
+
+async def _fetch_or_use_existing_graph(
+    assessment_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Fetch the assessment and check for an existing skill graph.
+
+    Args:
+        assessment_id: The assessment identifier.
+
+    Returns:
+        A tuple of (existing_skill_graph_or_None, assessment_dict).
+    """
+    assessment = await keboli_client.get_assessment(assessment_id)
+    existing_graph = assessment.get("skill_graph")
+    return existing_graph, assessment
+
+
+async def _invoke_skill_extraction(
+    job_description: str, difficulty_level: str
+) -> dict[str, Any]:
+    """Run the LLM chain to extract a structured skill graph.
+
+    Args:
+        job_description: The raw job description text.
+        difficulty_level: The assessment difficulty level.
+
+    Returns:
+        The generated skill graph dict.
+    """
+    prompt = ChatPromptTemplate.from_template(SKILL_EXTRACTION_PROMPT)
+    structured_llm = llm.with_structured_output(SkillGraph)
+    chain = prompt | structured_llm
+
+    result = await chain.ainvoke(
+        {
+            "job_description": job_description,
+            "difficulty_level": difficulty_level,
+        }
+    )
+
+    return result  
 
 
 @app.post(
@@ -180,9 +227,10 @@ async def generate_skill_graph(request: SkillGraphRequest) -> SkillGraphResponse
         ExternalServiceError: If LLM generation or database update fails.
     """
     try:
-        assessment = await keboli_client.get_assessment(request.assessment_id)
+        existing_graph, assessment = await _fetch_or_use_existing_graph(
+            request.assessment_id
+        )
 
-        existing_graph = assessment.get("skill_graph")
         if existing_graph:
             return SkillGraphResponse(status="exists", skill_graph=existing_graph)
 
@@ -212,18 +260,9 @@ async def generate_skill_graph(request: SkillGraphRequest) -> SkillGraphResponse
             }
         )
 
-        prompt = ChatPromptTemplate.from_template(SKILL_EXTRACTION_PROMPT)
-        structured_llm = llm.with_structured_output(SkillGraph)
-        chain = prompt | structured_llm
-
-        result = await chain.ainvoke(
-            {
-                "job_description": job_description,
-                "difficulty_level": difficulty_level,
-            }
+        skill_graph: dict[str, Any] = await _invoke_skill_extraction(
+            job_description, difficulty_level
         )
-
-        skill_graph: dict[str, Any] = result  
 
         logger.info(
             "Skill graph generated — experience_level=%s, %d skills extracted",
@@ -252,7 +291,7 @@ async def generate_skill_graph(request: SkillGraphRequest) -> SkillGraphResponse
 
     except AppError:
         raise
-    except Exception as e:
+    except (ConnectionError, OSError, ValueError, TypeError) as e:
         await keboli_client.post_log(
             {
                 "level": "ERROR",
@@ -264,11 +303,95 @@ async def generate_skill_graph(request: SkillGraphRequest) -> SkillGraphResponse
                 "error_stack": str(e),
             }
         )
-        logger.error("Error generating skill graph: %s", e, exc_info=True)
+        logger.exception("Error generating skill graph: %s", e)
         raise ExternalServiceError(
             service_name="LLM",
             message=f"Failed to generate skill graph: {e!s}",
         ) from e
+
+
+def _build_initial_state(request: InterviewTurnRequest) -> dict[str, Any]:
+    """Build the initial interview state for a new session.
+
+    Args:
+        request: The incoming interview turn request.
+
+    Returns:
+        A fully initialized state dict.
+    """
+    return {
+        "session_id": request.session_id,
+        "assessment_id": request.assessment_id,
+        "messages": [],
+        "current_skill_index": 0,
+        "current_skill_depth": 0,
+        "elapsed_time_seconds": 0,
+        "is_completed": False,
+        "conversation_phase": "greeting",
+        "previous_skill_name": None,
+        "nudge_count": 0,
+        "closing_phase": None,
+        "closing_reason": None,
+        "time_warning_given": False,
+        "qa_phase": False,
+        "qa_turns": 0,
+    }
+
+
+def _deserialize_messages(
+    raw_messages: list[dict[str, str]],
+) -> list[HumanMessage | AIMessage]:
+    """Convert serialized message dicts back into LangChain message objects.
+
+    Args:
+        raw_messages: List of dicts with 'role' and 'content' keys.
+
+    Returns:
+        List of HumanMessage / AIMessage instances.
+    """
+    msg_objs: list[HumanMessage | AIMessage] = []
+    for m in raw_messages:
+        if m["role"] == "human":
+            msg_objs.append(HumanMessage(content=m["content"]))
+        else:
+            msg_objs.append(AIMessage(content=m["content"]))
+    return msg_objs
+
+
+def _serialize_messages(
+    messages: list[HumanMessage | AIMessage],
+) -> list[dict[str, str]]:
+    """Serialize LangChain message objects into JSON-safe dicts.
+
+    Args:
+        messages: List of LangChain message objects.
+
+    Returns:
+        List of dicts with 'role' and 'content' keys.
+    """
+    serializable: list[dict[str, str]] = []
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            hcontent = m.content
+            hstr = (
+                str(hcontent)
+                if isinstance(hcontent, str)
+                else str(hcontent[0])
+                if isinstance(hcontent, list) and hcontent
+                else ""
+            )
+            serializable.append({"role": "human", "content": hstr})
+        elif isinstance(m, AIMessage):
+            acontent = m.content
+            astr = (
+                str(acontent)
+                if isinstance(acontent, str)
+                else str(acontent[0])
+                if isinstance(acontent, list) and acontent
+                else ""
+            )
+            serializable.append({"role": "ai", "content": astr})
+    return serializable
 
 
 @app.post(
@@ -295,31 +418,9 @@ async def chat(request: InterviewTurnRequest) -> ChatResponse:
     """
     if request.state:
         state: dict[str, Any] = request.state
-        msg_objs: list[HumanMessage | AIMessage] = []
-        for m in state.get("messages", []):
-            if m["role"] == "human":
-                msg_objs.append(HumanMessage(content=m["content"]))
-            else:
-                msg_objs.append(AIMessage(content=m["content"]))
-        state["messages"] = msg_objs
+        state["messages"] = _deserialize_messages(state.get("messages", []))
     else:
-        state = {
-            "session_id": request.session_id,
-            "assessment_id": request.assessment_id,
-            "messages": [],
-            "current_skill_index": 0,
-            "current_skill_depth": 0,
-            "elapsed_time_seconds": 0,
-            "is_completed": False,
-            "conversation_phase": "greeting",
-            "previous_skill_name": None,
-            "nudge_count": 0,
-            "closing_phase": None,
-            "closing_reason": None,
-            "time_warning_given": False,
-            "qa_phase": False,
-            "qa_turns": 0,
-        }
+        state = _build_initial_state(request)
 
     if request.last_message:
         state["messages"].append(HumanMessage(content=request.last_message))
@@ -340,28 +441,7 @@ async def chat(request: InterviewTurnRequest) -> ChatResponse:
                 )
                 break
 
-        serializable_messages: list[dict[str, str]] = []
-        for m in final_state["messages"]:
-            if isinstance(m, HumanMessage):
-                hcontent = m.content
-                hstr = (
-                    str(hcontent)
-                    if isinstance(hcontent, str)
-                    else str(hcontent[0])
-                    if isinstance(hcontent, list) and hcontent
-                    else ""
-                )
-                serializable_messages.append({"role": "human", "content": hstr})
-            elif isinstance(m, AIMessage):
-                acontent = m.content
-                astr = (
-                    str(acontent)
-                    if isinstance(acontent, str)
-                    else str(acontent[0])
-                    if isinstance(acontent, list) and acontent
-                    else ""
-                )
-                serializable_messages.append({"role": "ai", "content": astr})
+        serializable_messages = _serialize_messages(final_state["messages"])
 
         response_state: dict[str, Any] = {
             **{k: v for k, v in final_state.items() if k != "messages"},
@@ -388,7 +468,7 @@ async def chat(request: InterviewTurnRequest) -> ChatResponse:
         )
     except AppError:
         raise
-    except Exception as e:
+    except (ConnectionError, OSError, ValueError, TypeError, RuntimeError) as e:
         await keboli_client.post_log(
             {
                 "level": "ERROR",
